@@ -164,7 +164,6 @@ export function DonationsTable() {
 
   return (
     <div className="flex flex-col gap-4">
-      <DonationSummary donations={visibleDonations} />
       <DonationFilters
         totalCount={donations.length}
         visibleCount={visibleDonations.length}
@@ -233,6 +232,7 @@ export function DonationsTable() {
           </Table>
         </div>
       )}
+      <DonationSummary donations={visibleDonations} />
     </div>
   );
 }
