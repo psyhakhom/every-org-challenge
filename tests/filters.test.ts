@@ -10,7 +10,6 @@ import type { Donation } from "@/lib/types";
 
 function d(overrides: Partial<Donation> & Pick<Donation, "uuid">): Donation {
   return {
-    uuid: overrides.uuid,
     amount: 1000,
     currency: "USD",
     paymentMethod: "cc",

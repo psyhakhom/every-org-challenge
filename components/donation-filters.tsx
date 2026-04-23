@@ -87,7 +87,7 @@ export function DonationFilters({
           <SelectValue />
         </SelectTrigger>
         <SelectContent>
-          <SelectItem value={ALL}>All statuses</SelectItem>
+          <SelectItem value={ALL}>All</SelectItem>
           {DONATION_STATUSES.map((s) => {
             const Icon = STATUS_ICONS[s];
             return (
@@ -105,7 +105,7 @@ export function DonationFilters({
           <SelectValue />
         </SelectTrigger>
         <SelectContent>
-          <SelectItem value={ALL}>All payment methods</SelectItem>
+          <SelectItem value={ALL}>All</SelectItem>
           {PAYMENT_METHODS.map((m) => {
             const Icon = PAYMENT_METHOD_ICONS[m];
             return (
