@@ -1,156 +1,93 @@
 # Donations Service
 
-A small full-stack app that ingests and processes donations and exposes an internal dashboard for reviewing and updating them.
-
-- **Backend** — Next.js App Router route handlers over an HMR-safe in-memory store, seeded with 8 sample donations.
-- **Frontend** — React client dashboard (shadcn/ui + Lucide) with optimistic status updates and toast-surfaced errors.
-- **Tests** — 73 Vitest tests covering the transition matrix, the store, validation, every route handler, and the UI action component.
+A small Next.js app that ingests donations through an HTTP API and lets an operator walk them through a short lifecycle from an internal dashboard. Storage is in-memory, so the state resets on every restart; 73 tests cover the API, the state machine, and the UI.
 
 ## Stack
 
-| Layer | Choice |
-|---|---|
-| Framework | Next.js 16 (App Router), React 19, TypeScript |
-| Styling | Tailwind CSS v4 |
-| UI | shadcn/ui (Base UI primitives), Lucide icons, Sonner toasts |
-| Tests | Vitest + Testing Library (jsdom) |
-| Storage | In-memory `Map<uuid, Donation>`, singleton-pinned to `globalThis` so it survives HMR |
+Next.js 16 on the App Router, React 19, TypeScript. Tailwind v4 for styling, shadcn/ui (built on Base UI) for the dashboard primitives, Lucide for icons, Sonner for toasts. Tests run on Vitest with Testing Library for the UI pieces.
 
-## Getting started
+The store is a plain `Map<uuid, Donation>` pinned to `globalThis` so it survives Next's dev-mode hot reload. Swapping it for a real database is a single-file change: route handlers never see the implementation.
+
+## Running it
 
 ```bash
 npm install
 npm run dev        # http://localhost:3000
-npm test           # run the Vitest suite
-npx tsc --noEmit   # type-check
-npm run lint       # ESLint
+npm test
 ```
+
+The dev server seeds eight donations on first load. The test suite finishes in about a second.
 
 ## API
 
-All responses are JSON. Errors have the shape `{ "error": string }`.
+Every request and response is JSON. Errors come back as `{ "error": "<message>" }` with a specific reason: the validator names the exact field that failed, and invalid transitions are reported like `invalid transition: success -> failure`.
 
-### `POST /api/donations`
-Ingest a donation.
+`GET /api/donations` returns every donation under `{ "donations": [...] }`.
 
-**Body**: full `Donation` minus `updatedAt` (server sets it equal to `createdAt` on create).
+`GET /api/donations/:uuid` returns one donation, or 404 if it isn't there.
 
-| Status | When |
-|---|---|
-| `201` | Created. Body is the stored `Donation`. |
-| `409` | A donation with the same `uuid` already exists. |
-| `400` | Payload is malformed — missing field, wrong type, bad enum value, non-positive amount, non-parseable `createdAt`, etc. |
+`POST /api/donations` creates a donation. The body is a complete donation minus `updatedAt`, which the server sets equal to `createdAt` on insert. A duplicate `uuid` returns 409. A malformed body returns 400.
 
-### `GET /api/donations`
-List all donations.
-
-**Response**: `{ "donations": Donation[] }`, always `200`.
-
-### `GET /api/donations/:uuid`
-Fetch one.
-
-| Status | When |
-|---|---|
-| `200` | Body is the `Donation`. |
-| `404` | No donation with that `uuid`. |
-
-### `PATCH /api/donations/:uuid/status`
-Move a donation through its lifecycle.
-
-**Body**: `{ "status": DonationStatus }`.
-
-| Status | When |
-|---|---|
-| `200` | Valid transition. Body is the updated `Donation` with a refreshed `updatedAt`. |
-| `404` | No donation with that `uuid`. |
-| `409` | Target status equals the donation's current status. See [Idempotency](#idempotency-and-409-on-patch). |
-| `422` | Target status is a valid enum value but not a valid transition from the current status. |
-| `400` | Body is malformed or `status` isn't one of `new \| pending \| success \| failure`. |
+`PATCH /api/donations/:uuid/status` moves a donation through its lifecycle. The body is `{ "status": "<next>" }`. On success you get the updated donation back with a refreshed `updatedAt`. A missing donation is 404. A status outside the enum is 400. A valid enum value that isn't a legal transition is 422. A request whose target status matches the current status is 409 — covered in its own section below.
 
 ## State machine
 
 ```
-  ┌─────┐     ┌─────────┐     ┌──────────┐
-  │ new │ ──▶ │ pending │ ──▶ │ success  │
-  └─────┘     │         │     └──────────┘
-              │         │     ┌──────────┐
-              │         │ ──▶ │ failure  │
-              └─────────┘     └──────────┘
+  new ──▶ pending ──▶ success
+                  ╲
+                   ▶ failure
 ```
 
-- `new → pending` — allowed
-- `pending → success` — allowed
-- `pending → failure` — allowed
-- Everything else (including the reverse transitions, `new → success` short-circuits, and any move out of a terminal state) is rejected with `422`.
+That's the whole machine. `new` can only become `pending`. `pending` can only become `success` or `failure`. Both terminal states are sinks. No reversals, no skips, no cycles. Anything else is rejected with 422.
 
-The machine is monotonic and terminal: a donation never re-enters an earlier state, and `success`/`failure` are sinks.
+The UI enforces the same rules a layer higher so illegal transitions never reach the wire. Terminal rows show `—` in the Actions column with no control at all. `new` rows render a single "Mark pending" button. `pending` rows render a dropdown with exactly two options. The server validation still holds the line, though, and the dashboard reconciles against it on every failure.
 
-## Idempotency and 409 on `PATCH`
+## On duplicate `PATCH`es
 
-The spec mandates a floor: if `target === current`, return `409`. Beyond that it's intentionally open.
+The spec requires that a `PATCH` whose target status equals the current status return 409. It deliberately leaves the rest open.
 
-**Our rule**: `409` is returned **only** when the target status equals the donation's current status — a stateless derivation from the live resource. No request history is kept, no idempotency key is required.
+We stop at the minimum: 409 if and only if the requested status matches the donation's current status, derived statelessly from the live resource on each request. No request log, no idempotency key, no time-based dedup. The state machine does most of the work for us. Because it's monotonic and terminal, once a donation sits in `X`, every future "set status to `X`" returns 409 — which happens to be the honest answer.
 
-**Why this choice.** The state machine is monotonic and terminal, which collapses most "duplicate" ambiguity:
+That leaves one awkward case: a client that successfully PATCHed, lost the response, and retries. They get back 409 with something like `status already success`. The useful way to read that message is *"you're already there"* — a retrying client can treat a 409 whose target matches the server's current status as an effective no-op success, and confirm with a GET if they want certainty. It isn't as ergonomic as proper idempotency keys, but it doesn't cost us anything in complexity, and it doesn't require an API-contract change the spec never describes.
 
-- Once a donation sits in `X`, any request to `set status to X` will `409` forever. That's correct: the state is already where the caller wanted it.
-- A client that retries a successful `PATCH` (e.g. after a lost connection) gets `409` with `error: "status already <target>"`. That response is actionable — a retrying client can treat *"409 whose target matches the server's current status"* as **effective success**, confirmable with a follow-up `GET`.
-- The code is one line in the store (`if (existing.status === newStatus) return { ok: false, reason: "same_status" }`). No TTL maps, no server-side request logs, no new headers.
+A few alternatives we considered and passed on:
 
-**What we rejected, and why.**
+**Idempotency-Key headers**, Stripe-style, are the right pattern for public APIs that get hammered by retry-heavy clients. They're also a contract change — a new required header and a response cache on the server. Worth the work when this service opens up to external callers; overkill for an internal dashboard.
 
-| Approach | Why not |
-|---|---|
-| **Convert same-status to `200`** (treat as silently idempotent) | Violates the spec floor ("`409` at minimum"). |
-| **Idempotency-Key header (Stripe-style)** | Cleanest retry semantics, but requires a contract change the spec doesn't mention. Worth adopting if this service ever serves untrusted or retry-heavy clients. |
-| **`If-Match: <updatedAt>` optimistic locking** | Solves *concurrent modification* (two admins racing), not *duplicate retries*. Different problem. Not needed for a single-admin internal dashboard; revisit if we open this up to multiple writers. |
-| **Time-window dedup on `(uuid, status)`** | Fuzzy at the edges, requires state, and the terminal state machine already absorbs the common cases it would catch. |
+**`If-Match` optimistic locking** solves concurrent modification, not duplicate retries. "Two admins pressed the button at the same time" is a different failure mode than "one admin's button press fired twice." A single-operator internal tool doesn't need it.
 
-**409 also appears on `POST`** for duplicate `uuid`. Same stateless rule: if a donation with that `uuid` already exists, we return `409` rather than overwriting. Retries with a new `uuid` succeed; retries with the same `uuid` keep the original intact.
+**Time-window dedup** on `(uuid, status)` catches double-clicks but introduces fuzzy edges and another piece of server state. The UI already disables the button during an in-flight request via `useTransition`, and the state machine absorbs the rest.
 
-## UI behavior
+The same 409 convention applies to `POST`: a duplicate `uuid` returns 409 rather than overwriting, for the same "don't silently clobber" reason.
 
-The dashboard enforces the state machine at the interaction layer so invalid transitions can't even be expressed:
-
-- `success` and `failure` rows render a muted `—` in the Actions column — no control at all.
-- `new` rows render a single `Mark pending` button.
-- `pending` rows render a dropdown with `Mark success` and `Mark failure` — its only two valid exits.
-
-On a successful `PATCH`, the row is updated in place with the server-returned `Donation`. On failure, the error from the API is surfaced via a Sonner toast and the table refetches to resync with server truth. Amounts render in dollars (`$50.00`), never cents.
-
-## Project layout
+## Code layout
 
 ```
-app/
-  api/donations/
-    route.ts                       GET list, POST create
-    [uuid]/route.ts                GET one
-    [uuid]/status/route.ts         PATCH status
-  layout.tsx                       Root layout + Toaster
-  page.tsx                         Dashboard shell
+app/api/donations/
+  route.ts                      GET list, POST create
+  [uuid]/route.ts               GET one
+  [uuid]/status/route.ts        PATCH status
+app/page.tsx                    Dashboard shell (server component)
 components/
-  donations-table.tsx              Table, loading / error / empty states
-  status-action.tsx                Valid-transitions-only action control
-  status-badge.tsx                 Status badge with icon + color
-  ui/                              shadcn primitives (Button, Table, Badge, DropdownMenu, Sonner, …)
+  donations-table.tsx           Client component; owns the fetch + row state
+  status-action.tsx             Renders only the valid next-state controls
+  status-badge.tsx              Status pill with icon + color
+  ui/                           shadcn primitives
 lib/
-  types.ts                         Shared contract: Donation, DonationStatus, transition helpers
-  store.ts                         HMR-safe singleton Map, seed data, mutations
-  validation.ts                    Runtime validators for POST/PATCH bodies
-  api-client.ts                    Typed fetch helpers used by the UI
-  format.ts                        Dollar + date formatting
-tests/
-  types.test.ts                    Exhaustive 4×4 transition matrix
-  store.test.ts                    CRUD + copy semantics
-  validation.test.ts               Every error-message branch
-  api-donations.test.ts            Route handlers invoked with new Request()
-  status-action.test.tsx           UI branching + mocked api-client + sonner
+  types.ts                      Shared contract + transition helpers
+  store.ts                      In-memory store, seed data, HMR-safe singleton
+  validation.ts                 Runtime validators for POST/PATCH bodies
+  api-client.ts                 Typed fetch wrappers used by the UI
+  format.ts                     Dollar + date formatting
+tests/                          Vitest suites, one per concern
 ```
+
+`lib/types.ts` is the contract shared between the server and the client. Its transition helpers (`isValidTransition`, `allowedNextStatuses`) are consumed by both the API validator and the UI's action component, so the answer to *"what's allowed from here"* lives in exactly one place.
 
 ## Tests
+
+The suite covers the transition matrix exhaustively — every `(from, to)` pair in a 4×4 grid — the store's CRUD and its copy semantics, every validator error branch, each route handler invoked directly with `new Request(...)` (no HTTP server needed), and the UI action component's per-status rendering with the api-client and toast stack mocked out.
 
 ```bash
 npm test
 ```
-
-All 73 tests run in ~1s. Route-handler tests call the Next.js App Router handlers directly with a `new Request(...)` — no HTTP server, no port binding. UI tests use Testing Library with `vi.mock`-ed `@/lib/api-client` and `sonner`.
