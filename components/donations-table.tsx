@@ -1,6 +1,7 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { useSearchParams } from "next/navigation";
 import type { LucideIcon } from "lucide-react";
 import {
   Bitcoin,
@@ -9,6 +10,7 @@ import {
   Landmark,
   Loader2,
   RefreshCw,
+  SearchX,
   Smartphone,
   TriangleAlert,
 } from "lucide-react";
@@ -22,9 +24,15 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { Button } from "@/components/ui/button";
+import { DonationFilters } from "@/components/donation-filters";
 import { StatusAction } from "@/components/status-action";
 import { StatusBadge } from "@/components/status-badge";
 import { fetchDonations } from "@/lib/api-client";
+import {
+  filterDonations,
+  parseMethodParam,
+  parseStatusParam,
+} from "@/lib/filters";
 import { formatAmount, formatDateTime } from "@/lib/format";
 import type { Donation, PaymentMethod } from "@/lib/types";
 
@@ -48,6 +56,11 @@ export function DonationsTable() {
   const [donations, setDonations] = useState<Donation[]>([]);
   const [state, setState] = useState<LoadState>("loading");
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+
+  const searchParams = useSearchParams();
+  const statusFilter = parseStatusParam(searchParams.get("status"));
+  const methodFilter = parseMethodParam(searchParams.get("method"));
+  const hasActiveFilter = statusFilter !== null || methodFilter !== null;
 
   const load = useCallback(async () => {
     try {
@@ -101,6 +114,15 @@ export function DonationsTable() {
     void load();
   }, [load]);
 
+  const visibleDonations = useMemo(
+    () =>
+      filterDonations(donations, {
+        status: statusFilter,
+        method: methodFilter,
+      }),
+    [donations, statusFilter, methodFilter],
+  );
+
   if (state === "loading" && donations.length === 0) {
     return (
       <div className="flex items-center gap-2 rounded-md border p-6 text-sm text-muted-foreground">
@@ -140,58 +162,75 @@ export function DonationsTable() {
   }
 
   return (
-    <div className="rounded-md border">
-      <Table>
-        <TableHeader>
-          <TableRow>
-            <TableHead>Donor</TableHead>
-            <TableHead>Nonprofit</TableHead>
-            <TableHead className="text-right">Amount</TableHead>
-            <TableHead>Method</TableHead>
-            <TableHead>Status</TableHead>
-            <TableHead>Created</TableHead>
-            <TableHead className="text-right">Actions</TableHead>
-          </TableRow>
-        </TableHeader>
-        <TableBody>
-          {donations.map((d) => {
-            const MethodIcon = PAYMENT_METHOD_ICONS[d.paymentMethod];
-            return (
-              <TableRow key={d.uuid}>
-                <TableCell className="font-mono text-xs">{d.donorId}</TableCell>
-                <TableCell className="font-mono text-xs">
-                  {d.nonprofitId}
-                </TableCell>
-                <TableCell className="text-right tabular-nums">
-                  {formatAmount(d.amount, d.currency)}
-                </TableCell>
-                <TableCell>
-                  <span className="inline-flex items-center gap-1.5">
-                    <MethodIcon
-                      className="size-3.5 text-muted-foreground"
-                      aria-hidden="true"
-                    />
-                    {PAYMENT_METHOD_LABELS[d.paymentMethod]}
-                  </span>
-                </TableCell>
-                <TableCell>
-                  <StatusBadge status={d.status} />
-                </TableCell>
-                <TableCell className="text-muted-foreground">
-                  {formatDateTime(d.createdAt)}
-                </TableCell>
-                <TableCell className="text-right">
-                  <StatusAction
-                    donation={d}
-                    onUpdated={handleUpdated}
-                    onError={handleError}
-                  />
-                </TableCell>
+    <div className="flex flex-col gap-4">
+      <DonationFilters
+        totalCount={donations.length}
+        visibleCount={visibleDonations.length}
+      />
+      {visibleDonations.length === 0 ? (
+        <div className="flex flex-col items-center justify-center gap-2 rounded-md border p-10 text-sm text-muted-foreground">
+          <SearchX className="size-8 opacity-60" aria-hidden="true" />
+          {hasActiveFilter
+            ? "No donations match the current filter."
+            : "No donations to show."}
+        </div>
+      ) : (
+        <div className="rounded-md border">
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>Donor</TableHead>
+                <TableHead>Nonprofit</TableHead>
+                <TableHead className="text-right">Amount</TableHead>
+                <TableHead>Method</TableHead>
+                <TableHead>Status</TableHead>
+                <TableHead>Created</TableHead>
+                <TableHead className="text-right">Actions</TableHead>
               </TableRow>
-            );
-          })}
-        </TableBody>
-      </Table>
+            </TableHeader>
+            <TableBody>
+              {visibleDonations.map((d) => {
+                const MethodIcon = PAYMENT_METHOD_ICONS[d.paymentMethod];
+                return (
+                  <TableRow key={d.uuid}>
+                    <TableCell className="font-mono text-xs">
+                      {d.donorId}
+                    </TableCell>
+                    <TableCell className="font-mono text-xs">
+                      {d.nonprofitId}
+                    </TableCell>
+                    <TableCell className="text-right tabular-nums">
+                      {formatAmount(d.amount, d.currency)}
+                    </TableCell>
+                    <TableCell>
+                      <span className="inline-flex items-center gap-1.5">
+                        <MethodIcon
+                          className="size-3.5 text-muted-foreground"
+                          aria-hidden="true"
+                        />
+                        {PAYMENT_METHOD_LABELS[d.paymentMethod]}
+                      </span>
+                    </TableCell>
+                    <TableCell>
+                      <StatusBadge status={d.status} />
+                    </TableCell>
+                    <TableCell className="text-muted-foreground">
+                      {formatDateTime(d.createdAt)}
+                    </TableCell>
+                    <TableCell className="text-right">
+                      <StatusAction
+                        donation={d}
+                        onUpdated={handleUpdated}
+                        onError={handleError}
+                      />
+                    </TableCell>
+                  </TableRow>
+                );
+              })}
+            </TableBody>
+          </Table>
+        </div>
+      )}
     </div>
   );
 }

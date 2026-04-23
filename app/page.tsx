@@ -1,4 +1,5 @@
-import { HandHeart } from "lucide-react";
+import { Suspense } from "react";
+import { HandHeart, Loader2 } from "lucide-react";
 
 import { DonationsTable } from "@/components/donations-table";
 
@@ -18,7 +19,16 @@ export default function Home() {
             Review recent donations and move them through their lifecycle.
           </p>
         </header>
-        <DonationsTable />
+        <Suspense
+          fallback={
+            <div className="flex items-center gap-2 rounded-md border p-6 text-sm text-muted-foreground">
+              <Loader2 className="size-4 animate-spin" aria-hidden="true" />
+              Loading donations…
+            </div>
+          }
+        >
+          <DonationsTable />
+        </Suspense>
       </main>
     </div>
   );
