@@ -25,6 +25,7 @@ import {
 } from "@/components/ui/table";
 import { Button } from "@/components/ui/button";
 import { DonationFilters } from "@/components/donation-filters";
+import { DonationSummary } from "@/components/donation-summary";
 import { StatusAction } from "@/components/status-action";
 import { StatusBadge } from "@/components/status-badge";
 import { fetchDonations } from "@/lib/api-client";
@@ -163,6 +164,7 @@ export function DonationsTable() {
 
   return (
     <div className="flex flex-col gap-4">
+      <DonationSummary donations={visibleDonations} />
       <DonationFilters
         totalCount={donations.length}
         visibleCount={visibleDonations.length}
