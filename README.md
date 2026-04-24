@@ -1,6 +1,6 @@
 # Donations Service
 
-A small Next.js app that ingests donations through an HTTP API and lets an operator walk them through a short lifecycle from an internal dashboard. Storage is in-memory, so the state resets on every restart; 105 tests cover the API, the state machine, the helpers, the webhook simulation, and the UI.
+A small Next.js app that ingests donations through an HTTP API and lets an operator walk them through a short lifecycle from an internal dashboard. Storage is in-memory, so the state resets on every restart; 108 tests cover the API, the state machine, the helpers, the webhook simulation, and the UI.
 
 ## Stack
 
@@ -64,7 +64,7 @@ The brief called for a minimum of two things: view every donation with status, a
 
 **Dollar formatting, not cents.** Amounts render as `$50.00`, never `5000`. Called out explicitly in the brief, and handled in one place via `lib/format.ts`.
 
-**Webhook events on terminal transitions.** An operator won't interact with these directly, but downstream systems would — receipt emails, accounting, donor communications. See the webhook section further down.
+**Webhook events on terminal transitions, with a visible toast pairing.** Every `pending → success|failure` click fires two stacked toasts: a green "Marked &lt;status&gt;" confirming the state change, then "Webhook emitted: donation.&lt;status&gt;" with a Webhook icon and a `See GET /api/events` hint. The pairing is deliberate — one toast means only the state flipped, two toasts mean an event also fired and any downstream subscriber behavior would have been triggered. `new → pending` stays single-toast because that transition doesn't emit. Downstream systems (receipt emails, accounting, donor communications) are the real consumers of the event; the second toast just makes the invisible side of the feature visible to the operator. See the webhook section further down for the server side.
 
 The explicit non-goals are worth naming too, because *not* building them was also a decision:
 
