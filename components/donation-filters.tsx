@@ -83,7 +83,7 @@ export function DonationFilters({
   return (
     <div className="flex flex-wrap items-center gap-3">
       <Select value={status} onValueChange={(v) => update("status", v ?? ALL)}>
-        <SelectTrigger size="sm" className="min-w-40">
+        <SelectTrigger className="min-w-40">
           <SelectValue />
         </SelectTrigger>
         <SelectContent>
@@ -101,7 +101,7 @@ export function DonationFilters({
       </Select>
 
       <Select value={method} onValueChange={(v) => update("method", v ?? ALL)}>
-        <SelectTrigger size="sm" className="min-w-44">
+        <SelectTrigger className="min-w-44">
           <SelectValue />
         </SelectTrigger>
         <SelectContent>
@@ -119,7 +119,7 @@ export function DonationFilters({
       </Select>
 
       {hasActive && (
-        <Button variant="ghost" size="sm" onClick={clear}>
+        <Button variant="ghost" onClick={clear}>
           <X className="size-3.5" />
           Clear
         </Button>

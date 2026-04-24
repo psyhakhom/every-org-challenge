@@ -145,7 +145,7 @@ export function DonationsTable() {
             {errorMessage ?? "Failed to load donations."}
           </p>
         </div>
-        <Button size="sm" variant="outline" onClick={reload}>
+        <Button variant="outline" onClick={reload}>
           <RefreshCw className="size-3.5" aria-hidden="true" />
           Retry
         </Button>

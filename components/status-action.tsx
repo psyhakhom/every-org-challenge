@@ -69,7 +69,6 @@ export function StatusAction({
     const Icon = ACTION_ICONS[only];
     return (
       <Button
-        size="sm"
         variant="outline"
         disabled={pending}
         onClick={() => runUpdate(only)}
@@ -88,7 +87,7 @@ export function StatusAction({
     <DropdownMenu>
       <DropdownMenuTrigger
         render={
-          <Button size="sm" variant="outline" disabled={pending}>
+          <Button variant="outline" disabled={pending}>
             {pending && <Loader2 className="size-3.5 animate-spin" />}
             Update status
             <ChevronDown className="ml-1 size-3.5" />
