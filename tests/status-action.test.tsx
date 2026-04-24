@@ -7,6 +7,7 @@ import type { Donation, DonationStatus } from "@/lib/types";
 const updateDonationStatusMock = vi.fn();
 const toastSuccessMock = vi.fn();
 const toastErrorMock = vi.fn();
+const toastInfoMock = vi.fn();
 
 vi.mock("@/lib/api-client", () => ({
   updateDonationStatus: (...args: unknown[]) =>
@@ -17,6 +18,7 @@ vi.mock("sonner", () => ({
   toast: {
     success: (...args: unknown[]) => toastSuccessMock(...args),
     error: (...args: unknown[]) => toastErrorMock(...args),
+    info: (...args: unknown[]) => toastInfoMock(...args),
   },
 }));
 
@@ -42,6 +44,7 @@ describe("<StatusAction />", () => {
     updateDonationStatusMock.mockReset();
     toastSuccessMock.mockReset();
     toastErrorMock.mockReset();
+    toastInfoMock.mockReset();
   });
 
   test("terminal status success — renders em dash, no button/menu", () => {
@@ -158,5 +161,56 @@ describe("<StatusAction />", () => {
       expect(onError).toHaveBeenCalledWith(boom);
     });
     expect(onUpdated).not.toHaveBeenCalled();
+  });
+
+  test("new -> pending does NOT fire a webhook toast", async () => {
+    const user = userEvent.setup();
+    const donation = makeDonation("new");
+    const updated = { ...donation, status: "pending" as DonationStatus };
+    updateDonationStatusMock.mockResolvedValue(updated);
+
+    render(<StatusAction donation={donation} onUpdated={() => {}} />);
+    await user.click(screen.getByRole("button", { name: /mark pending/i }));
+
+    await waitFor(() => {
+      expect(toastSuccessMock).toHaveBeenCalled();
+    });
+    expect(toastInfoMock).not.toHaveBeenCalled();
+  });
+
+  test("pending -> success fires a webhook toast referencing donation.success", async () => {
+    const user = userEvent.setup();
+    const donation = makeDonation("pending");
+    const updated = { ...donation, status: "success" as DonationStatus };
+    updateDonationStatusMock.mockResolvedValue(updated);
+
+    render(<StatusAction donation={donation} onUpdated={() => {}} />);
+    await user.click(screen.getByRole("button", { name: /update status/i }));
+    await user.click(await screen.findByText(/mark success/i));
+
+    await waitFor(() => {
+      expect(toastInfoMock).toHaveBeenCalledTimes(1);
+    });
+    const [title, options] = toastInfoMock.mock.calls[0];
+    expect(title).toBe("Webhook emitted: donation.success");
+    expect(options).toMatchObject({ description: expect.any(String) });
+  });
+
+  test("pending -> failure fires a webhook toast referencing donation.failure", async () => {
+    const user = userEvent.setup();
+    const donation = makeDonation("pending");
+    const updated = { ...donation, status: "failure" as DonationStatus };
+    updateDonationStatusMock.mockResolvedValue(updated);
+
+    render(<StatusAction donation={donation} onUpdated={() => {}} />);
+    await user.click(screen.getByRole("button", { name: /update status/i }));
+    await user.click(await screen.findByText(/mark failure/i));
+
+    await waitFor(() => {
+      expect(toastInfoMock).toHaveBeenCalledTimes(1);
+    });
+    expect(toastInfoMock.mock.calls[0][0]).toBe(
+      "Webhook emitted: donation.failure",
+    );
   });
 });

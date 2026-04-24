@@ -10,6 +10,7 @@ import {
   Clock,
   Loader2,
   Sparkles,
+  Webhook,
 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
@@ -55,6 +56,12 @@ export function StatusAction({
         const updated = await updateDonationStatus(donation.uuid, status);
         onUpdated(updated);
         toast.success(`Marked ${STATUS_LABELS[status].toLowerCase()}`);
+        if (status === "success" || status === "failure") {
+          toast.info(`Webhook emitted: donation.${status}`, {
+            icon: <Webhook className="size-4" aria-hidden="true" />,
+            description: "See GET /api/events",
+          });
+        }
       } catch (err) {
         const error =
           err instanceof Error ? err : new Error("Failed to update donation.");
