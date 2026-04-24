@@ -1,10 +1,11 @@
 // @vitest-environment node
-import { describe, test, expect, beforeEach } from "vitest";
+import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 
 import { GET as listGET, POST as listPOST } from "@/app/api/donations/route";
 import { GET as detailGET } from "@/app/api/donations/[uuid]/route";
 import { PATCH as statusPATCH } from "@/app/api/donations/[uuid]/status/route";
 import { listDonations, resetStore } from "@/lib/store";
+import { listEvents, resetEvents } from "@/lib/events";
 import type { Donation } from "@/lib/types";
 
 const SEED_NEW_UUID = "354362d8-2080-4ca1-9ede-892e4c6d3a25";
@@ -49,7 +50,10 @@ function makeCreateBody(
 }
 
 describe("GET /api/donations", () => {
-  beforeEach(() => resetStore());
+  beforeEach(() => {
+    resetStore();
+    resetEvents();
+  });
 
   test("returns 200 with 8 seeded donations", async () => {
     const res = await listGET();
@@ -61,7 +65,10 @@ describe("GET /api/donations", () => {
 });
 
 describe("GET /api/donations/[uuid]", () => {
-  beforeEach(() => resetStore());
+  beforeEach(() => {
+    resetStore();
+    resetEvents();
+  });
 
   test("200 with known seed uuid", async () => {
     const res = await detailGET(mockReq("GET"), ctx(SEED_NEW_UUID));
@@ -80,7 +87,10 @@ describe("GET /api/donations/[uuid]", () => {
 });
 
 describe("POST /api/donations", () => {
-  beforeEach(() => resetStore());
+  beforeEach(() => {
+    resetStore();
+    resetEvents();
+  });
 
   test("201 on happy path, updatedAt === createdAt, appears in list", async () => {
     const body = makeCreateBody();
@@ -118,7 +128,10 @@ describe("POST /api/donations", () => {
 });
 
 describe("PATCH /api/donations/[uuid]/status", () => {
-  beforeEach(() => resetStore());
+  beforeEach(() => {
+    resetStore();
+    resetEvents();
+  });
 
   test("200 on valid transition", async () => {
     const res = await statusPATCH(
@@ -183,7 +196,10 @@ describe("PATCH /api/donations/[uuid]/status", () => {
 });
 
 describe("end-to-end flow: POST -> PATCH -> PATCH -> GET", () => {
-  beforeEach(() => resetStore());
+  beforeEach(() => {
+    resetStore();
+    resetEvents();
+  });
 
   test("new -> pending -> success round-trip", async () => {
     const body = makeCreateBody({
@@ -211,5 +227,97 @@ describe("end-to-end flow: POST -> PATCH -> PATCH -> GET", () => {
     expect(final.status).toBe(200);
     const finalBody = (await final.json()) as Donation;
     expect(finalBody.status).toBe("success");
+  });
+});
+
+describe("webhook events on PATCH", () => {
+  beforeEach(() => {
+    resetStore();
+    resetEvents();
+    vi.spyOn(console, "log").mockImplementation(() => {});
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  test("new -> pending does not emit an event", async () => {
+    const res = await statusPATCH(
+      mockReq("PATCH", { status: "pending" }),
+      ctx(SEED_NEW_UUID),
+    );
+    expect(res.status).toBe(200);
+    expect(listEvents()).toEqual([]);
+  });
+
+  test("pending -> success emits a donation.success event with the updated donation", async () => {
+    const res = await statusPATCH(
+      mockReq("PATCH", { status: "success" }),
+      ctx(SEED_PENDING_UUID),
+    );
+    expect(res.status).toBe(200);
+
+    const events = listEvents();
+    expect(events.length).toBe(1);
+    expect(events[0].type).toBe("donation.success");
+    expect(events[0].donation.uuid).toBe(SEED_PENDING_UUID);
+    expect(events[0].donation.status).toBe("success");
+    expect(events[0].id).toMatch(/^evt_/);
+  });
+
+  test("pending -> failure emits a donation.failure event", async () => {
+    const res = await statusPATCH(
+      mockReq("PATCH", { status: "failure" }),
+      ctx(SEED_PENDING_UUID),
+    );
+    expect(res.status).toBe(200);
+
+    const events = listEvents();
+    expect(events.length).toBe(1);
+    expect(events[0].type).toBe("donation.failure");
+    expect(events[0].donation.status).toBe("failure");
+  });
+
+  test("failed PATCH (invalid transition) does not emit", async () => {
+    const res = await statusPATCH(
+      mockReq("PATCH", { status: "failure" }),
+      ctx(SEED_SUCCESS_UUID),
+    );
+    expect(res.status).toBe(422);
+    expect(listEvents()).toEqual([]);
+  });
+
+  test("failed PATCH (same status) does not emit", async () => {
+    const res = await statusPATCH(
+      mockReq("PATCH", { status: "success" }),
+      ctx(SEED_SUCCESS_UUID),
+    );
+    expect(res.status).toBe(409);
+    expect(listEvents()).toEqual([]);
+  });
+
+  test("failed PATCH (unknown donation) does not emit", async () => {
+    const res = await statusPATCH(
+      mockReq("PATCH", { status: "success" }),
+      ctx("does-not-exist"),
+    );
+    expect(res.status).toBe(404);
+    expect(listEvents()).toEqual([]);
+  });
+
+  test("GET /api/events returns the logged events", async () => {
+    const { GET: eventsGET } = await import("@/app/api/events/route");
+    await statusPATCH(
+      mockReq("PATCH", { status: "success" }),
+      ctx(SEED_PENDING_UUID),
+    );
+    const res = await eventsGET();
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      events: { type: string; donation: Donation }[];
+    };
+    expect(body.events.length).toBe(1);
+    expect(body.events[0].type).toBe("donation.success");
+    expect(body.events[0].donation.uuid).toBe(SEED_PENDING_UUID);
   });
 });

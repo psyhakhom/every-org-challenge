@@ -1,6 +1,6 @@
 # Donations Service
 
-A small Next.js app that ingests donations through an HTTP API and lets an operator walk them through a short lifecycle from an internal dashboard. Storage is in-memory, so the state resets on every restart; 90 tests cover the API, the state machine, the helpers, and the UI.
+A small Next.js app that ingests donations through an HTTP API and lets an operator walk them through a short lifecycle from an internal dashboard. Storage is in-memory, so the state resets on every restart; 105 tests cover the API, the state machine, the helpers, the webhook simulation, and the UI.
 
 ## Stack
 
@@ -28,7 +28,9 @@ Every request and response is JSON. Errors come back as `{ "error": "<message>" 
 
 `POST /api/donations` creates a donation. The body is a complete donation minus `updatedAt`, which the server sets equal to `createdAt` on insert. A duplicate `uuid` returns 409. A malformed body returns 400.
 
-`PATCH /api/donations/:uuid/status` moves a donation through its lifecycle. The body is `{ "status": "<next>" }`. On success you get the updated donation back with a refreshed `updatedAt`. A missing donation is 404. A status outside the enum is 400. A valid enum value that isn't a legal transition is 422. A request whose target status matches the current status is 409 — covered in its own section below.
+`PATCH /api/donations/:uuid/status` moves a donation through its lifecycle. The body is `{ "status": "<next>" }`. On success you get the updated donation back with a refreshed `updatedAt`. A missing donation is 404. A status outside the enum is 400. A valid enum value that isn't a legal transition is 422. A request whose target status matches the current status is 409 — covered in its own section below. A transition into `success` or `failure` also emits a webhook event; see the webhook section below.
+
+`GET /api/events` returns the simulated-webhook event log under `{ "events": [...] }`. Each event has an `id`, a `type` (`donation.success` or `donation.failure`), an ISO `occurredAt` timestamp, and a snapshot of the donation at the moment the event fired.
 
 ## State machine
 
@@ -60,6 +62,8 @@ Notes on the non-obvious choices in the code, so the next reader doesn't have to
 
 **Shared transition contract.** `lib/types.ts` exports `isValidTransition` and `allowedNextStatuses`, and both the API validator and the UI's action component consume them. The answer to "what's allowed from here" lives in exactly one place, so there's no drift between client and server.
 
+**Webhook events fire on transitions, not on ingest.** A `POST /api/donations` that creates a donation already in `success` or `failure` state does not emit an event; only a `PATCH` that moves a donation into a terminal state does. The semantic is "this donation reached a terminal state," which happens at the moment of transition, not the moment of data entry. Events are emitted synchronously from the route handler after the store update lands, logged to the server console, and appended to an in-memory log exposed at `GET /api/events`. Event emission is deliberately outside the store — stores stay a pure data layer, side effects happen at the application boundary. A real-URL fan-out via a `WEBHOOK_URL` env var would slot in here with minimal disruption to the existing tests.
+
 ## On duplicate `PATCH`es
 
 The spec requires that a `PATCH` whose target status equals the current status return 409. It deliberately leaves the rest open.
@@ -84,7 +88,8 @@ The same 409 convention applies to `POST`: a duplicate `uuid` returns 409 rather
 app/api/donations/
   route.ts                      GET list, POST create
   [uuid]/route.ts               GET one
-  [uuid]/status/route.ts        PATCH status
+  [uuid]/status/route.ts        PATCH status; emits events on success/failure
+app/api/events/route.ts         GET the simulated-webhook event log
 app/page.tsx                    Dashboard shell (server component)
 components/
   donations-table.tsx           Owns the fetch + row state; applies URL filters
@@ -97,6 +102,7 @@ lib/
   types.ts                      Shared contract + transition helpers
   store.ts                      In-memory store, seed data, HMR-safe singleton
   validation.ts                 Runtime validators for POST/PATCH bodies
+  events.ts                     Webhook event log + emit/list/reset helpers
   filters.ts                    filterDonations + URL-param parsers
   stats.ts                      computeSummary for the summary view
   api-client.ts                 Typed fetch wrappers used by the UI

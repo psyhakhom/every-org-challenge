@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 
 import type { ApiError } from "@/lib/types";
+import { emitDonationEvent, eventTypeForTransition } from "@/lib/events";
 import { getDonation, updateDonationStatus } from "@/lib/store";
 import { validateStatusUpdate } from "@/lib/validation";
 
@@ -28,6 +29,10 @@ export async function PATCH(
 
   const result = updateDonationStatus(uuid, parsed.status);
   if (result.ok) {
+    const eventType = eventTypeForTransition(parsed.status);
+    if (eventType) {
+      emitDonationEvent(eventType, result.donation);
+    }
     return NextResponse.json(result.donation, { status: 200 });
   }
 
