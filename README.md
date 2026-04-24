@@ -143,6 +143,28 @@ tests/                          Vitest suites, one per concern
 
 A set of bounded hardening changes that go beyond the brief's ask, chosen to fit the app's real threat surface — an internal dashboard with one external write endpoint (`POST /api/donations`) and a JSON API called from a trusted network. Auth, rate limiting, HMAC-signed webhooks, and a full CSP were explicitly left out; they're either out-of-scope per the brief, require shared state this demo doesn't have, or do more harm than good if configured loosely. Each change below is small, independently testable, and motivated by a concrete failure mode rather than a generic checklist.
 
+### Tests
+
+The suite covers the transition matrix exhaustively — every `(from, to)` pair in a 4×4 grid — the store's CRUD and its copy semantics, every validator error branch, each route handler invoked directly with `new Request(...)` (no HTTP server needed), the filter and summary helpers against hand-picked inputs, the streaming body reader's cap and JSON-parse paths, and the UI action component's per-status rendering with the api-client and toast stack mocked out.
+
+```bash
+npm test
+```
+
+By file, 124 tests across nine suites:
+
+```
+tests/types.test.ts           20  transition helpers over the full 4×4 matrix
+tests/store.test.ts           12  CRUD + seed + copy-on-read semantics
+tests/validation.test.ts      26  every validator branch incl. hardening checks
+tests/filters.test.ts         10  filter predicate + URL param parsing
+tests/stats.test.ts            7  summary math and edge cases
+tests/events.test.ts           8  event emit/list/reset + transition mapping
+tests/http.test.ts             5  body-size cap, malformed JSON, streaming guard
+tests/api-donations.test.ts   27  every route handler × every error branch
+tests/status-action.test.tsx   9  UI per-status rendering + toast pairing
+```
+
 ### Body-size cap on writes
 
 `lib/http.ts` provides a `readJsonBody` helper that replaces the route handlers' `await request.json()` calls. It enforces a 16 KiB ceiling twice — once against a declared `Content-Length` (cheap early reject) and again while streaming the body (so a chunked sender can't lie about the length). A donation serializes to a few hundred bytes; 16 KiB is generous for a legitimate client and small enough to bound adversarial memory use. Over-size requests return 413 `BODY_TOO_LARGE` instead of consuming the body.
@@ -186,25 +208,3 @@ Named so the next reader doesn't have to reverse-engineer the non-decisions:
 - **HMAC-signed webhooks.** The webhook is a simulation (see the main webhook section); there is no outbound HTTP to sign.
 - **CSRF protection.** The API is JSON-only with no cookie auth, so the standard browser-CSRF vector doesn't apply here.
 - **Content-Security-Policy.** Called out above — skipped rather than half-done.
-
-### Tests
-
-The suite covers the transition matrix exhaustively — every `(from, to)` pair in a 4×4 grid — the store's CRUD and its copy semantics, every validator error branch, each route handler invoked directly with `new Request(...)` (no HTTP server needed), the filter and summary helpers against hand-picked inputs, the streaming body reader's cap and JSON-parse paths, and the UI action component's per-status rendering with the api-client and toast stack mocked out.
-
-```bash
-npm test
-```
-
-By file, 124 tests across nine suites:
-
-```
-tests/types.test.ts           20  transition helpers over the full 4×4 matrix
-tests/store.test.ts           12  CRUD + seed + copy-on-read semantics
-tests/validation.test.ts      26  every validator branch incl. hardening checks
-tests/filters.test.ts         10  filter predicate + URL param parsing
-tests/stats.test.ts            7  summary math and edge cases
-tests/events.test.ts           8  event emit/list/reset + transition mapping
-tests/http.test.ts             5  body-size cap, malformed JSON, streaming guard
-tests/api-donations.test.ts   27  every route handler × every error branch
-tests/status-action.test.tsx   9  UI per-status rendering + toast pairing
-```
