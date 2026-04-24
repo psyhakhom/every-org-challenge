@@ -48,6 +48,35 @@ The UI enforces the same rules a layer higher so illegal transitions never reach
 
 Notes on the non-obvious choices in the code, so the next reader doesn't have to reverse-engineer them. The duplicate-`PATCH` question gets its own section below since it's the core judgment the spec invited.
 
+### What the dashboard does (and doesn't)
+
+The brief called for a minimum of two things: view every donation with status, amount, payment method, and nonprofit visible, and update a donation's status along the valid transitions. Both are covered by the single-page table. On top of that baseline, a few features were added that an operator working with a real volume of donations would actually reach for.
+
+**Filters for status and payment method.** Eight seed donations are easy to eyeball, but the dashboard is designed as a shape that works for tens-to-hundreds, and at that size scanning for "what's stuck in pending" is tedious. Two dropdowns above the table narrow the view by either dimension, and the filter state lives in the URL so links are shareable.
+
+**Summary below the table.** Three stat cards (successfully donated, success rate, in-flight) plus a by-payment-method breakdown with proportional bars. An operator scanning the dashboard at the start of a shift wants the at-a-glance numbers first, before drilling into individual rows.
+
+**Status and payment-method iconography.** Status badges carry an icon plus a color per state (Sparkles / Clock / CircleCheck / CircleX); payment-method cells carry CreditCard / Landmark / Bitcoin / Smartphone. A scan of the table communicates status without reading text, which is the difference between "quick glance" and "stop and read."
+
+**State-aware actions.** Terminal rows render `—` with no control at all. `new` rows render a single "Mark pending" button. `pending` rows render a dropdown with exactly two options. A click cannot express an invalid transition, which is belt-and-suspenders with the server's 422 enforcement — the operator never has to learn the state machine to avoid pushing a button that would fail.
+
+**Toast-surfaced errors.** Any PATCH failure funnels the server's `error` message into a Sonner toast and triggers a refetch, so the table's local state can never drift from server truth.
+
+**Dollar formatting, not cents.** Amounts render as `$50.00`, never `5000`. Called out explicitly in the brief, and handled in one place via `lib/format.ts`.
+
+**Webhook events on terminal transitions.** An operator won't interact with these directly, but downstream systems would — receipt emails, accounting, donor communications. See the webhook section further down.
+
+The explicit non-goals are worth naming too, because *not* building them was also a decision:
+
+- **No per-donation detail page.** The seven-column table row carries every field an operator needs. A modal or detail route would add navigation without adding information.
+- **No manual donation-creation UI.** `POST /api/donations` exists for ingestion from upstream processors, not operator data entry. A "New donation" form in the UI would imply a workflow this dashboard isn't for.
+- **No delete or void.** Donations terminate, they don't disappear. A `failure` is distinct from "never happened," and the state machine already accounts for that.
+- **No bulk actions.** Multi-select "mark all pending as success" is conceivable but dangerous: it would have to re-enforce the state machine per row and the cost of a mistake is real money. Deferred.
+- **No free-text search.** Filters cover the 80% case for eight-to-a-few-hundred donations. Search-by-UUID and search-by-donor are reasonable follow-ups once the data volume justifies the interaction cost.
+- **No auth.** The brief framed this as an internal dashboard behind a network gate; authn/authz wasn't in scope.
+
+### Implementation decisions
+
 **Filtering runs client-side.** The backend contract stays simple and the single fetched list powers the table, the summary, and any future view. Query-param filters (`?status=&method=`) on the API would matter for larger datasets; for a dashboard that works on dozens of donations at a time, the round-trip cost isn't worth the added surface.
 
 **Filter state lives in the URL.** `useSearchParams` + `router.replace({ scroll: false })`. Views become link-shareable, the browser back button works as expected, and a refresh preserves the user's selection. Unknown values like `?status=frozen` fall back to "All" rather than rendering an empty table.
