@@ -1,6 +1,6 @@
 # Donations Service
 
-A small Next.js app that ingests donations through an HTTP API and lets an operator walk them through a short lifecycle from an internal dashboard. Storage is in-memory, so the state resets on every restart; 108 tests cover the API, the state machine, the helpers, the webhook simulation, and the UI.
+A small Next.js app that ingests donations through an HTTP API and lets an operator walk them through a short lifecycle from an internal dashboard. Storage is in-memory, so the state resets on every restart; 124 tests cover the API, the state machine, the helpers, the webhook simulation, the body reader, and the UI.
 
 ## Stack
 
@@ -141,8 +141,70 @@ tests/                          Vitest suites, one per concern
 
 ## Tests
 
-The suite covers the transition matrix exhaustively — every `(from, to)` pair in a 4×4 grid — the store's CRUD and its copy semantics, every validator error branch, each route handler invoked directly with `new Request(...)` (no HTTP server needed), the filter and summary helpers against hand-picked inputs, and the UI action component's per-status rendering with the api-client and toast stack mocked out.
+The suite covers the transition matrix exhaustively — every `(from, to)` pair in a 4×4 grid — the store's CRUD and its copy semantics, every validator error branch, each route handler invoked directly with `new Request(...)` (no HTTP server needed), the filter and summary helpers against hand-picked inputs, the streaming body reader's cap and JSON-parse paths, and the UI action component's per-status rendering with the api-client and toast stack mocked out.
 
 ```bash
 npm test
 ```
+
+By file, 124 tests across nine suites:
+
+```
+tests/types.test.ts           20  transition helpers over the full 4×4 matrix
+tests/store.test.ts           12  CRUD + seed + copy-on-read semantics
+tests/validation.test.ts      26  every validator branch incl. hardening checks
+tests/filters.test.ts         10  filter predicate + URL param parsing
+tests/stats.test.ts            7  summary math and edge cases
+tests/events.test.ts           8  event emit/list/reset + transition mapping
+tests/http.test.ts             5  body-size cap, malformed JSON, streaming guard
+tests/api-donations.test.ts   27  every route handler × every error branch
+tests/status-action.test.tsx   9  UI per-status rendering + toast pairing
+```
+
+## Additional features
+
+A set of bounded hardening changes that go beyond the brief's ask, chosen to fit the app's real threat surface — an internal dashboard with one external write endpoint (`POST /api/donations`) and a JSON API called from a trusted network. Auth, rate limiting, HMAC-signed webhooks, and a full CSP were explicitly left out; they're either out-of-scope per the brief, require shared state this demo doesn't have, or do more harm than good if configured loosely. Each change below is small, independently testable, and motivated by a concrete failure mode rather than a generic checklist.
+
+### Body-size cap on writes
+
+`lib/http.ts` provides a `readJsonBody` helper that replaces the route handlers' `await request.json()` calls. It enforces a 16 KiB ceiling twice — once against a declared `Content-Length` (cheap early reject) and again while streaming the body (so a chunked sender can't lie about the length). A donation serializes to a few hundred bytes; 16 KiB is generous for a legitimate client and small enough to bound adversarial memory use. Over-size requests return 413 `BODY_TOO_LARGE` instead of consuming the body.
+
+### Stricter input validation
+
+`lib/validation.ts` tightened in four places, all motivated by inputs the old checks accepted but shouldn't have:
+
+- **UUID shape.** `uuid` must match the canonical 8-4-4-4-12 hex form. `"banana"` used to pass the non-empty-string check; it doesn't now. Lenient on version/variant nibbles so any well-formed UUID from an upstream processor is accepted.
+- **Strict ISO-8601 for `createdAt`.** The old `Date.parse` check accepted `"2026"`, `"Jan 15 2026"`, and `"2026-01-15T10:00:00"` (no timezone). A regex gates the format first — `YYYY-MM-DDTHH:MM:SS(.fraction)?(Z|±HH:MM)` — and `Date.parse` still runs as a sanity check on top.
+- **Length caps on free-form ids.** `nonprofitId` and `donorId` cap at 128 characters. Subsumed by the 16 KiB body cap in the worst case, but a cheaper reject and a clearer error message than "body too large".
+- **Amount ceiling.** `amount` must be ≤ 10¹² cents ($10B). Well below `Number.MAX_SAFE_INTEGER` so arithmetic on summary totals stays exact, and any legitimate donation fits comfortably.
+
+Existing error messages are preserved where the new check happens to hit the same path, so tests that assert on the old strings still pass.
+
+### Stable error codes
+
+`ApiError.code` is now populated on every non-2xx response — `INVALID_JSON`, `BODY_TOO_LARGE`, `VALIDATION`, `NOT_FOUND`, `DUPLICATE_UUID`, `INVALID_TRANSITION`, `SAME_STATUS`. Clients that care about branching (retry-on-409-same-status vs. fail-on-409-duplicate, say) can read the code rather than string-matching `error`. The string message stays the source of detail; the code is the stable contract.
+
+### Security headers
+
+`next.config.ts` sets four headers on every response:
+
+- `X-Frame-Options: DENY` — the dashboard isn't meant to be iframed, so clickjacking on status-update actions is ruled out at the header.
+- `X-Content-Type-Options: nosniff` — prevents a response served as JSON from being interpreted as a script if a browser heuristic disagrees.
+- `Referrer-Policy: strict-origin-when-cross-origin` — trims the outbound referrer on any cross-origin navigation.
+- `Permissions-Policy: camera=(), microphone=(), geolocation=(), interest-cohort=()` — the dashboard uses none of these; denying them drops the attack surface to zero.
+
+A Content-Security-Policy would go further but wants nonce plumbing to stay compatible with Next's inline scripts and Tailwind's inline styles, which is the kind of thing that's easy to get wrong and then declare done. Left out deliberately.
+
+### Unpredictable event IDs
+
+`lib/events.ts` now mints event ids as `evt_${crypto.randomUUID()}` instead of `evt_${Date.now()}_${Math.random()}`. `Math.random` is neither collision-safe nor unpredictable; `crypto.randomUUID` is both. The `evt_` prefix is preserved so any log scanner that greps for it keeps working.
+
+### What isn't in scope
+
+Named so the next reader doesn't have to reverse-engineer the non-decisions:
+
+- **Authentication / authorization.** Out of scope per the brief — the dashboard is framed as internal, behind a network gate.
+- **Rate limiting.** Would require shared state (Redis, etc.) that this demo doesn't have. Closest thing is the body-size cap, which bounds the per-request cost.
+- **HMAC-signed webhooks.** The webhook is a simulation (see the main webhook section); there is no outbound HTTP to sign.
+- **CSRF protection.** The API is JSON-only with no cookie auth, so the standard browser-CSRF vector doesn't apply here.
+- **Content-Security-Policy.** Called out above — skipped rather than half-done.

@@ -33,9 +33,18 @@ export interface GetDonationsResponse {
   donations: Donation[];
 }
 
+export type ApiErrorCode =
+  | "INVALID_JSON"
+  | "BODY_TOO_LARGE"
+  | "VALIDATION"
+  | "NOT_FOUND"
+  | "DUPLICATE_UUID"
+  | "INVALID_TRANSITION"
+  | "SAME_STATUS";
+
 export interface ApiError {
   error: string;
-  code?: string;
+  code?: ApiErrorCode;
 }
 
 export const PAYMENT_METHODS: readonly PaymentMethod[] = [

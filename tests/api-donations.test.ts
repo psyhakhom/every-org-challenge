@@ -81,8 +81,9 @@ describe("GET /api/donations/[uuid]", () => {
   test("404 with unknown uuid", async () => {
     const res = await detailGET(mockReq("GET"), ctx("nope"));
     expect(res.status).toBe(404);
-    const body = (await res.json()) as { error: string };
+    const body = (await res.json()) as { error: string; code: string };
     expect(body.error).toBe("donation not found: nope");
+    expect(body.code).toBe("NOT_FOUND");
   });
 });
 
@@ -122,8 +123,34 @@ describe("POST /api/donations", () => {
   test("400 on non-JSON body", async () => {
     const res = await listPOST(rawReq("POST", "not-json{"));
     expect(res.status).toBe(400);
-    const err = (await res.json()) as { error: string };
+    const err = (await res.json()) as { error: string; code: string };
     expect(err.error).toBe("invalid JSON body");
+    expect(err.code).toBe("INVALID_JSON");
+  });
+
+  test("413 when body exceeds the size cap", async () => {
+    const huge = "x".repeat(20_000);
+    const res = await listPOST(
+      rawReq("POST", JSON.stringify(makeCreateBody({ donorId: huge }))),
+    );
+    expect(res.status).toBe(413);
+    const err = (await res.json()) as { error: string; code: string };
+    expect(err.code).toBe("BODY_TOO_LARGE");
+    expect(err.error).toBe("request body exceeds maximum size");
+  });
+
+  test("409 duplicate response carries code DUPLICATE_UUID", async () => {
+    const dup = makeCreateBody({ uuid: SEED_NEW_UUID });
+    const res = await listPOST(mockReq("POST", dup));
+    const err = (await res.json()) as { error: string; code: string };
+    expect(err.code).toBe("DUPLICATE_UUID");
+  });
+
+  test("400 validation response carries code VALIDATION", async () => {
+    const { amount: _omit, ...rest } = makeCreateBody();
+    const res = await listPOST(mockReq("POST", rest));
+    const err = (await res.json()) as { error: string; code: string };
+    expect(err.code).toBe("VALIDATION");
   });
 });
 
@@ -170,8 +197,9 @@ describe("PATCH /api/donations/[uuid]/status", () => {
       ctx("missing-uuid"),
     );
     expect(res.status).toBe(404);
-    const err = (await res.json()) as { error: string };
+    const err = (await res.json()) as { error: string; code: string };
     expect(err.error).toBe("donation not found: missing-uuid");
+    expect(err.code).toBe("NOT_FOUND");
   });
 
   test("400 on invalid status value", async () => {
@@ -180,8 +208,9 @@ describe("PATCH /api/donations/[uuid]/status", () => {
       ctx(SEED_NEW_UUID),
     );
     expect(res.status).toBe(400);
-    const err = (await res.json()) as { error: string };
+    const err = (await res.json()) as { error: string; code: string };
     expect(err.error).toBe("invalid status: frozen");
+    expect(err.code).toBe("VALIDATION");
   });
 
   test("400 on non-JSON body", async () => {
@@ -190,8 +219,40 @@ describe("PATCH /api/donations/[uuid]/status", () => {
       ctx(SEED_NEW_UUID),
     );
     expect(res.status).toBe(400);
-    const err = (await res.json()) as { error: string };
+    const err = (await res.json()) as { error: string; code: string };
     expect(err.error).toBe("invalid JSON body");
+    expect(err.code).toBe("INVALID_JSON");
+  });
+
+  test("422 invalid-transition response carries code INVALID_TRANSITION", async () => {
+    const res = await statusPATCH(
+      mockReq("PATCH", { status: "failure" }),
+      ctx(SEED_SUCCESS_UUID),
+    );
+    expect(res.status).toBe(422);
+    const err = (await res.json()) as { error: string; code: string };
+    expect(err.code).toBe("INVALID_TRANSITION");
+  });
+
+  test("409 same-status response carries code SAME_STATUS", async () => {
+    const res = await statusPATCH(
+      mockReq("PATCH", { status: "new" }),
+      ctx(SEED_NEW_UUID),
+    );
+    expect(res.status).toBe(409);
+    const err = (await res.json()) as { error: string; code: string };
+    expect(err.code).toBe("SAME_STATUS");
+  });
+
+  test("413 when PATCH body exceeds the size cap", async () => {
+    const huge = "x".repeat(20_000);
+    const res = await statusPATCH(
+      rawReq("PATCH", JSON.stringify({ status: "pending", junk: huge })),
+      ctx(SEED_NEW_UUID),
+    );
+    expect(res.status).toBe(413);
+    const err = (await res.json()) as { error: string; code: string };
+    expect(err.code).toBe("BODY_TOO_LARGE");
   });
 });
 

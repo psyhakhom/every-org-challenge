@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 
 import type { ApiError } from "@/lib/types";
 import { emitDonationEvent, eventTypeForTransition } from "@/lib/events";
+import { readJsonBody } from "@/lib/http";
 import { getDonation, updateDonationStatus } from "@/lib/store";
 import { validateStatusUpdate } from "@/lib/validation";
 
@@ -13,17 +14,22 @@ export async function PATCH(
 ): Promise<NextResponse> {
   const { uuid } = await params;
 
-  let body: unknown;
-  try {
-    body = await request.json();
-  } catch {
-    const err: ApiError = { error: "invalid JSON body" };
+  const read = await readJsonBody(request);
+  if (!read.ok) {
+    if (read.reason === "too_large") {
+      const err: ApiError = {
+        error: "request body exceeds maximum size",
+        code: "BODY_TOO_LARGE",
+      };
+      return NextResponse.json(err, { status: 413 });
+    }
+    const err: ApiError = { error: "invalid JSON body", code: "INVALID_JSON" };
     return NextResponse.json(err, { status: 400 });
   }
 
-  const parsed = validateStatusUpdate(body);
+  const parsed = validateStatusUpdate(read.value);
   if (!parsed.ok) {
-    const err: ApiError = { error: parsed.error };
+    const err: ApiError = { error: parsed.error, code: "VALIDATION" };
     return NextResponse.json(err, { status: 400 });
   }
 
@@ -37,13 +43,17 @@ export async function PATCH(
   }
 
   if (result.reason === "not_found") {
-    const err: ApiError = { error: `donation not found: ${uuid}` };
+    const err: ApiError = {
+      error: `donation not found: ${uuid}`,
+      code: "NOT_FOUND",
+    };
     return NextResponse.json(err, { status: 404 });
   }
 
   if (result.reason === "same_status") {
     const err: ApiError = {
       error: `status already ${parsed.status}`,
+      code: "SAME_STATUS",
     };
     return NextResponse.json(err, { status: 409 });
   }
@@ -53,6 +63,7 @@ export async function PATCH(
   const from = current?.status ?? "unknown";
   const err: ApiError = {
     error: `invalid transition: ${from} -> ${parsed.status}`,
+    code: "INVALID_TRANSITION",
   };
   return NextResponse.json(err, { status: 422 });
 }

@@ -131,6 +131,47 @@ describe("validateCreateDonation", () => {
     expect(res.ok).toBe(false);
     if (!res.ok) expect(res.error).toBe("createdAt is not a valid ISO date");
   });
+
+  test("non-UUID-shaped uuid rejected", () => {
+    for (const bad of ["banana", "1234", "aaaa-bbbb-cccc", "x".repeat(36)]) {
+      const res = validateCreateDonation(baseBody({ uuid: bad }));
+      expect(res.ok).toBe(false);
+      if (!res.ok) expect(res.error).toBe("uuid must be a valid UUID");
+    }
+  });
+
+  test("lenient ISO strings that Date.parse accepts are now rejected", () => {
+    // "2026" parses via Date.parse but is not a full ISO-8601 timestamp.
+    for (const bad of ["2026", "2026-01-15", "Jan 15 2026", "2026-01-15T10:00:00"]) {
+      const res = validateCreateDonation(baseBody({ createdAt: bad }));
+      expect(res.ok).toBe(false);
+      if (!res.ok) expect(res.error).toBe("createdAt is not a valid ISO date");
+    }
+  });
+
+  test("nonprofitId longer than 128 chars rejected", () => {
+    const res = validateCreateDonation(
+      baseBody({ nonprofitId: "a".repeat(129) }),
+    );
+    expect(res.ok).toBe(false);
+    if (!res.ok)
+      expect(res.error).toBe("nonprofitId must be at most 128 characters");
+  });
+
+  test("donorId longer than 128 chars rejected", () => {
+    const res = validateCreateDonation(baseBody({ donorId: "a".repeat(129) }));
+    expect(res.ok).toBe(false);
+    if (!res.ok)
+      expect(res.error).toBe("donorId must be at most 128 characters");
+  });
+
+  test("amount above the $10B ceiling rejected", () => {
+    const res = validateCreateDonation(
+      baseBody({ amount: 1_000_000_000_001 }),
+    );
+    expect(res.ok).toBe(false);
+    if (!res.ok) expect(res.error).toBe("amount exceeds maximum allowed");
+  });
 });
 
 describe("validateStatusUpdate", () => {

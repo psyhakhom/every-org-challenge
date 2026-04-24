@@ -12,7 +12,10 @@ export async function GET(
   const { uuid } = await params;
   const donation = getDonation(uuid);
   if (!donation) {
-    const err: ApiError = { error: `donation not found: ${uuid}` };
+    const err: ApiError = {
+      error: `donation not found: ${uuid}`,
+      code: "NOT_FOUND",
+    };
     return NextResponse.json(err, { status: 404 });
   }
   return NextResponse.json(donation, { status: 200 });

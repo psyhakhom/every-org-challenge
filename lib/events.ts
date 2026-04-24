@@ -22,8 +22,10 @@ function getLog(): DonationEvent[] {
 }
 
 function newEventId(): string {
-  const rand = Math.random().toString(36).slice(2, 10);
-  return `evt_${Date.now().toString(36)}_${rand}`;
+  // crypto.randomUUID is collision-safe and unpredictable, both of which
+  // Math.random is not. Keep the `evt_` prefix so log scanners that grep
+  // for it keep working.
+  return `evt_${crypto.randomUUID()}`;
 }
 
 /**
