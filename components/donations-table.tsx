@@ -232,7 +232,7 @@ export function DonationsTable() {
           </Table>
         </div>
       )}
-      <DonationSummary donations={visibleDonations} />
+      <DonationSummary donations={donations} />
     </div>
   );
 }

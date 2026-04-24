@@ -1,6 +1,6 @@
 # Donations Service
 
-A small Next.js app that ingests donations through an HTTP API and lets an operator walk them through a short lifecycle from an internal dashboard. Storage is in-memory, so the state resets on every restart; 73 tests cover the API, the state machine, and the UI.
+A small Next.js app that ingests donations through an HTTP API and lets an operator walk them through a short lifecycle from an internal dashboard. Storage is in-memory, so the state resets on every restart; 90 tests cover the API, the state machine, the helpers, and the UI.
 
 ## Stack
 
@@ -42,6 +42,24 @@ That's the whole machine. `new` can only become `pending`. `pending` can only be
 
 The UI enforces the same rules a layer higher so illegal transitions never reach the wire. Terminal rows show `—` in the Actions column with no control at all. `new` rows render a single "Mark pending" button. `pending` rows render a dropdown with exactly two options. The server validation still holds the line, though, and the dashboard reconciles against it on every failure.
 
+## Design decisions
+
+Notes on the non-obvious choices in the code, so the next reader doesn't have to reverse-engineer them. The duplicate-`PATCH` question gets its own section below since it's the core judgment the spec invited.
+
+**Filtering runs client-side.** The backend contract stays simple and the single fetched list powers the table, the summary, and any future view. Query-param filters (`?status=&method=`) on the API would matter for larger datasets; for a dashboard that works on dozens of donations at a time, the round-trip cost isn't worth the added surface.
+
+**Filter state lives in the URL.** `useSearchParams` + `router.replace({ scroll: false })`. Views become link-shareable, the browser back button works as expected, and a refresh preserves the user's selection. Unknown values like `?status=frozen` fall back to "All" rather than rendering an empty table.
+
+**The summary is independent of filters.** The stat cards and by-payment-method breakdown always show store-wide totals — they don't shift around as the user filters the table. The filter row's "Showing N of M" already communicates the filtered scope for the table, and a filter-respecting summary tends to produce trivial numbers under common drill-downs (filter `status=success` → success rate 100%). The summary's job is to be a stable at-a-glance health panel; per-slice exploration is a separate view we haven't needed yet.
+
+**Success rate is measured over resolved donations only.** Denominator is `success + failure`; `new` and `pending` are excluded. Measuring against total count would drag the rate down whenever a batch of donations lands and hasn't processed yet, conflating "how good is our processing" with "how busy are we right now."
+
+**The UI gates transitions; the server still enforces them.** The actions column renders only the valid next-step controls per row, so an invalid transition can't be expressed by a click. The server's 422 check remains the source of truth, and the dashboard reconciles via refetch on any failure, but not offering impossible options keeps the operator's job unambiguous.
+
+**Optimistic row updates, refetch on error.** On a successful PATCH the table swaps in the server's authoritative response immediately. On failure the toast surfaces the server message and the list reloads rather than trusting stale local state.
+
+**Shared transition contract.** `lib/types.ts` exports `isValidTransition` and `allowedNextStatuses`, and both the API validator and the UI's action component consume them. The answer to "what's allowed from here" lives in exactly one place, so there's no drift between client and server.
+
 ## On duplicate `PATCH`es
 
 The spec requires that a `PATCH` whose target status equals the current status return 409. It deliberately leaves the rest open.
@@ -69,7 +87,9 @@ app/api/donations/
   [uuid]/status/route.ts        PATCH status
 app/page.tsx                    Dashboard shell (server component)
 components/
-  donations-table.tsx           Client component; owns the fetch + row state
+  donations-table.tsx           Owns the fetch + row state; applies URL filters
+  donation-filters.tsx          Status + payment-method filter controls
+  donation-summary.tsx          Stat cards + by-method breakdown (global)
   status-action.tsx             Renders only the valid next-state controls
   status-badge.tsx              Status pill with icon + color
   ui/                           shadcn primitives
@@ -77,16 +97,16 @@ lib/
   types.ts                      Shared contract + transition helpers
   store.ts                      In-memory store, seed data, HMR-safe singleton
   validation.ts                 Runtime validators for POST/PATCH bodies
+  filters.ts                    filterDonations + URL-param parsers
+  stats.ts                      computeSummary for the summary view
   api-client.ts                 Typed fetch wrappers used by the UI
   format.ts                     Dollar + date formatting
 tests/                          Vitest suites, one per concern
 ```
 
-`lib/types.ts` is the contract shared between the server and the client. Its transition helpers (`isValidTransition`, `allowedNextStatuses`) are consumed by both the API validator and the UI's action component, so the answer to *"what's allowed from here"* lives in exactly one place.
-
 ## Tests
 
-The suite covers the transition matrix exhaustively — every `(from, to)` pair in a 4×4 grid — the store's CRUD and its copy semantics, every validator error branch, each route handler invoked directly with `new Request(...)` (no HTTP server needed), and the UI action component's per-status rendering with the api-client and toast stack mocked out.
+The suite covers the transition matrix exhaustively — every `(from, to)` pair in a 4×4 grid — the store's CRUD and its copy semantics, every validator error branch, each route handler invoked directly with `new Request(...)` (no HTTP server needed), the filter and summary helpers against hand-picked inputs, and the UI action component's per-status rendering with the api-client and toast stack mocked out.
 
 ```bash
 npm test
